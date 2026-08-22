@@ -1,0 +1,80 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Nara — Landing</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>✦</text></svg>" />
+<style>
+  :root{
+    --bg:#0b0d12; --panel:#12151d; --line:#232838;
+    --fg:#e9ecf3; --muted:#9aa3b8; --accent:#7c9cff; --accent2:#66e3c4;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{
+    background:var(--bg); color:var(--fg);
+    font-family:"Pretendard","Segoe UI",system-ui,-apple-system,sans-serif;
+    line-height:1.6; -webkit-font-smoothing:antialiased;
+  }
+  .glow{position:fixed;inset:0;pointer-events:none;z-index:0;
+    background:radial-gradient(600px 400px at 20% 0%,rgba(124,156,255,.18),transparent 60%),
+               radial-gradient(500px 400px at 85% 20%,rgba(102,227,196,.12),transparent 60%);}
+  .wrap{position:relative;z-index:1;max-width:960px;margin:0 auto;padding:0 24px}
+  header{display:flex;justify-content:space-between;align-items:center;padding:28px 0}
+  .logo{font-weight:700;letter-spacing:-.02em;font-size:18px}
+  .logo span{color:var(--accent)}
+  nav a{color:var(--muted);text-decoration:none;margin-left:22px;font-size:14px}
+  nav a:hover{color:var(--fg)}
+  .hero{padding:80px 0 64px;text-align:center}
+  .badge{display:inline-block;border:1px solid var(--line);background:var(--panel);
+    color:var(--muted);font-size:13px;padding:6px 14px;border-radius:999px;margin-bottom:24px}
+  h1{font-size:clamp(34px,6vw,60px);line-height:1.15;letter-spacing:-.03em;font-weight:800}
+  h1 em{font-style:normal;background:linear-gradient(90deg,var(--accent),var(--accent2));
+    -webkit-background-clip:text;background-clip:text;color:transparent}
+  .sub{color:var(--muted);font-size:17px;margin:20px auto 0;max-width:560px}
+  .cta{display:flex;gap:12px;justify-content:center;flex-wrap:wrap;margin-top:36px}
+  .btn{padding:13px 26px;border-radius:10px;text-decoration:none;font-size:15px;font-weight:600;
+    transition:transform .15s ease,opacity .15s ease}
+  .btn:hover{transform:translateY(-2px)}
+  .btn-p{background:linear-gradient(90deg,var(--accent),var(--accent2));color:#0b0d12}
+  .btn-s{border:1px solid var(--line);color:var(--fg);background:var(--panel)}
+  .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:16px;padding:32px 0 72px}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:24px}
+  .card .ic{font-size:22px;margin-bottom:12px}
+  .card h3{font-size:16px;margin-bottom:6px}
+  .card p{color:var(--muted);font-size:14px}
+  footer{border-top:1px solid var(--line);padding:28px 0 48px;color:var(--muted);
+    font-size:13px;display:flex;justify-content:space-between;flex-wrap:wrap;gap:8px}
+</style>
+</head>
+<body>
+<div class="glow"></div>
+<div class="wrap">
+  <header>
+    <div class="logo">✦ nara<span>.dev</span></div>
+    <nav><a href="#features">Features</a><a href="#" >Docs</a><a href="#">Contact</a></nav>
+  </header>
+
+  <section class="hero">
+    <div class="badge">테스트 배포 · GitHub → Vercel</div>
+    <h1>아이디어를<br /><em>바로 배포하는</em> 방법</h1>
+    <p class="sub">정적 HTML 한 장으로 시작해서, 커밋 한 번이면 전 세계에 배포됩니다. 빌드도, 설정도 필요 없습니다.</p>
+    <div class="cta">
+      <a class="btn btn-p" href="#features">시작하기</a>
+      <a class="btn btn-s" href="#">깃허브 보기</a>
+    </div>
+  </section>
+
+  <section class="grid" id="features">
+    <div class="card"><div class="ic">⚡</div><h3>즉시 배포</h3><p>푸시하는 순간 자동으로 빌드되고 URL이 살아납니다.</p></div>
+    <div class="card"><div class="ic">🎨</div><h3>가벼운 디자인</h3><p>외부 라이브러리 없이 CSS만으로 만든 다크 테마.</p></div>
+    <div class="card"><div class="ic">📱</div><h3>반응형</h3><p>모바일부터 데스크톱까지 자연스럽게 맞춰집니다.</p></div>
+  </section>
+
+  <footer>
+    <div>© 2026 nara.dev — test landing page</div>
+    <div>Built with Claude Code</div>
+  </footer>
+</div>
+</body>
+</html>
