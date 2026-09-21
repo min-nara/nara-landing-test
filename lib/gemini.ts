@@ -83,20 +83,39 @@ type Part = { text: string } | { inlineData: { mimeType: string; data: string } 
 async function generate(
   model: string,
   body: Record<string, unknown>,
-): Promise<{ parts: Part[] }> {
-  const res = await fetch(`${BASE}/models/${model}:generateContent?key=${key()}`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-    cache: "no-store",
-  });
-  if (!res.ok) {
-    throw new Error(`gemini ${model} failed: ${res.status} ${(await res.text()).slice(0, 400)}`);
+): Promise<{ parts: Part[]; finishReason?: string }> {
+  // 429/5xx 는 "지금 붐빈다"는 뜻이라 대개 곧 풀린다. 대화 중에 한 번 삐끗했다고
+  // 세션을 끊어버리면 안 되므로 짧게 물러섰다가 다시 친다.
+  let res: Response | null = null;
+  let lastBody = "";
+  for (let attempt = 0; attempt < 3; attempt++) {
+    res = await fetch(`${BASE}/models/${model}:generateContent?key=${key()}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+      cache: "no-store",
+    });
+    if (res.ok) break;
+    lastBody = (await res.text()).slice(0, 400);
+    const retryable = res.status === 429 || res.status >= 500;
+    if (!retryable || attempt === 2) {
+      throw new Error(`gemini ${model} failed: ${res.status} ${lastBody}`);
+    }
+    console.warn(`[gemini] ${model} ${res.status}, 재시도 ${attempt + 1}/2`);
+    await new Promise((r) => setTimeout(r, 600 * 2 ** attempt + Math.random() * 300));
+  }
+  if (!res || !res.ok) {
+    throw new Error(`gemini ${model} failed: ${res?.status ?? "no response"} ${lastBody}`);
   }
   const json = (await res.json()) as {
-    candidates?: { content?: { parts?: Part[] } }[];
+    candidates?: { content?: { parts?: Part[] }; finishReason?: string }[];
   };
-  return { parts: json.candidates?.[0]?.content?.parts ?? [] };
+  const candidate = json.candidates?.[0];
+  // finishReason 을 버리면 잘린 응답을 정상 응답과 구분할 수 없다.
+  if (candidate?.finishReason && candidate.finishReason !== "STOP") {
+    console.warn(`[gemini] ${model} finishReason=${candidate.finishReason}`);
+  }
+  return { parts: candidate?.content?.parts ?? [], finishReason: candidate?.finishReason };
 }
 
 function textOf(parts: Part[]): string {
@@ -176,7 +195,13 @@ export async function chatTurn(system: string, history: Turn[]): Promise<string>
   const { parts } = await generate(model, {
     systemInstruction: { parts: [{ text: system }] },
     contents: history.map((t) => ({ role: t.role, parts: [{ text: t.text }] })),
-    generationConfig: { temperature: 0.9, maxOutputTokens: 200 },
+    generationConfig: {
+      temperature: 0.9,
+      // 3.x 계열은 thinking 토큰도 이 예산에서 깎는다. 대화 턴에 추론은 필요 없고,
+      // 오히려 응답이 늦어져 대화가 끊긴다. 꺼두고 예산도 넉넉히 준다.
+      thinkingConfig: { thinkingBudget: 0 },
+      maxOutputTokens: 400,
+    },
   });
   return textOf(parts) || "Sorry, say that again?";
 }
@@ -289,7 +314,14 @@ Rules:
         ],
       },
     ],
-    generationConfig: { responseMimeType: "application/json", temperature: 0.3 },
+    generationConfig: {
+      responseMimeType: "application/json",
+      temperature: 0.3,
+      // 예산을 안 주면 모델이 긴 thinking 을 잡고, 그 무거운 요청이 혼잡할 때
+      // 가장 먼저 503 으로 잘린다. 리포트는 한 번에 끝나야 하므로 예산을 묶는다.
+      thinkingConfig: { thinkingBudget: 0 },
+      maxOutputTokens: 1200,
+    },
   });
   return parseJson<Report>(textOf(parts));
 }
