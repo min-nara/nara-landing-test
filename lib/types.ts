@@ -1,6 +1,6 @@
-import type { Report } from "./gemini";
+import type { Report, Stall } from "./gemini";
 
-export type { Report, ReportUpgrade, Transcription, Rescue } from "./gemini";
+export type { Report, ReportUpgrade, Transcription, Rescue, Stall } from "./gemini";
 
 export type StoredTurn = {
   role: "ai" | "you";
@@ -9,6 +9,8 @@ export type StoredTurn = {
   ms?: number;
   /** 한국어 구조대로 건져낸 턴인지 */
   rescued?: boolean;
+  /** 이 턴에서 막힌 자리들 — 막힘 히트맵의 재료 */
+  stalls?: Stall[];
 };
 
 export type StoredSession = {

@@ -1,3 +1,6 @@
+import { DAILY_EXTRA } from "./scenarios-daily";
+import { WORK_EXTRA } from "./scenarios-work";
+
 export type Track = "daily" | "work";
 
 export type DialogueLine = {
@@ -9,6 +12,13 @@ export type DialogueLine = {
 export type SeedChunk = {
   en: string;
   ko: string;
+  /**
+   * 그 청크가 실제로 들어간 완전한 문장.
+   * 쉐도잉은 조각이 아니라 문장이어야 리듬과 억양이 붙는다 — 조각만 따라 하면
+   * 발음은 남아도 말의 흐름은 안 남는다.
+   */
+  example: string;
+  exampleKo: string;
   /** 왜 이 청크인지 — 한국 학습자가 자주 놓치는 지점 */
   note: string;
 };
@@ -38,7 +48,8 @@ export type Scenario = {
   round1Seconds: number;
 };
 
-export const SCENARIOS: Scenario[] = [
+/** 1차에 만든 여섯 개. 트랙별로 맨 앞에 둔다. */
+const CORE_SCENARIOS: Scenario[] = [
   {
     id: "weekend-recap",
     track: "daily",
@@ -70,26 +81,36 @@ export const SCENARIOS: Scenario[] = [
       {
         en: "I finally got around to ~ing",
         ko: "미루다가 드디어 ~했어",
+        example: "I finally got around to fixing my bike this weekend.",
+        exampleKo: "이번 주말에 미루던 자전거 수리를 드디어 했어.",
         note: "'드디어 했다'를 finally did로만 말하면 밋밋합니다. 미뤄왔다는 뉘앙스가 통째로 들어간 덩어리.",
       },
       {
         en: "It ended up taking ~",
         ko: "결국 ~나 걸렸어",
+        example: "It ended up taking the whole afternoon.",
+        exampleKo: "결국 오후를 통째로 썼어.",
         note: "end up이 입에서 안 나오면 '결국'을 못 씁니다. 근황 말하기의 핵심 연결어.",
       },
       {
         en: "Bigger than I expected",
         ko: "생각보다 컸어",
+        example: "It was bigger than I expected, honestly.",
+        exampleKo: "솔직히 생각보다 큰 일이었어.",
         note: "than I expected는 통째로 외워두면 형용사만 갈아끼워 무한 재활용됩니다.",
       },
       {
         en: "Pretty good, actually",
         ko: "사실 꽤 괜찮았어",
+        example: "Pretty good, actually — I got a lot done.",
+        exampleKo: "사실 꽤 괜찮았어. 할 일을 많이 해치웠거든.",
         note: "actually 하나로 대화가 살아납니다. 단답을 막는 가장 싼 장치.",
       },
       {
         en: "I'm pretty happy about it",
         ko: "그래서 기분 좋아",
+        example: "I rode it to work this morning, so I'm pretty happy about it.",
+        exampleKo: "오늘 아침에 타고 출근했어, 그래서 기분 좋아.",
         note: "감정으로 마무리하면 상대가 받아칠 거리가 생깁니다. 대화를 끊지 않는 마침표.",
       },
     ],
@@ -119,26 +140,36 @@ export const SCENARIOS: Scenario[] = [
       {
         en: "Oh really? / Wait, really?",
         ko: "어 진짜?",
+        example: "Oh really? How long were you there?",
+        exampleKo: "어 진짜? 얼마나 있었어?",
         note: "가장 싼 맞장구. 이게 자동으로 안 나오면 침묵이 생깁니다.",
       },
       {
         en: "That sounds amazing / rough / exhausting",
         ko: "그거 좋았겠다 / 힘들었겠다",
+        example: "That sounds amazing — I'd love to go someday.",
+        exampleKo: "그거 좋았겠다. 나도 언젠가 가보고 싶어.",
         note: "sounds + 형용사. 공감 표현을 한 패턴으로 끝냅니다.",
       },
       {
         en: "What made you ~?",
         ko: "왜 ~하게 된 거야?",
+        example: "What made you pick the north?",
+        exampleKo: "왜 북쪽으로 정한 거야?",
         note: "Why did you보다 훨씬 부드럽고, 상대가 길게 답하게 만듭니다.",
       },
       {
         en: "I had no idea",
         ko: "전혀 몰랐어",
+        example: "Wait, really? I had no idea.",
+        exampleKo: "어 진짜? 전혀 몰랐어.",
         note: "I didn't know는 정보 부족, I had no idea는 리액션입니다. 쓰임이 다릅니다.",
       },
       {
         en: "Different how? / Rough how?",
         ko: "어떻게 다른데?",
+        example: "Different how? Give me an example.",
+        exampleKo: "어떻게 다른데? 예를 들어봐.",
         note: "한 단어 되묻기. 문장 만들 필요 없이 대화를 이어붙이는 최고 효율 장치.",
       },
     ],
@@ -176,16 +207,20 @@ export const SCENARIOS: Scenario[] = [
       {
         en: "A couple of things. For one, ~",
         ko: "몇 가지 있는데, 우선 ~",
+        example: "A couple of things. For one, it's the only time my head goes quiet.",
+        exampleKo: "몇 가지 있는데, 우선 머릿속이 조용해지는 유일한 시간이야.",
         note: "말을 시작하면서 생각할 시간을 버는 장치. 침묵 대신 이걸 깝니다.",
       },
       {
         en: "There's something about ~",
         ko: "~에는 뭔가가 있어",
+        example: "There's something about being out there early in the morning.",
+        exampleKo: "이른 아침에 밖에 나가 있는 그 느낌이 뭔가 있어.",
         note: "설명하기 어려운 감정을 얼버무리지 않고 표현하는 방법.",
       },
-      { en: "It was worth every ~", ko: "~할 가치가 충분했어", note: "구체적 경험을 감정으로 닫는 마무리 문형." },
-      { en: "I'm more of a ~ person", ko: "나는 ~쪽에 가까워", note: "취향을 단정하지 않고 말하는 안전한 틀." },
-      { en: "It's not for everyone", ko: "모두한테 맞는 건 아니지", note: "취향 차이를 인정하며 대화를 부드럽게 닫습니다." },
+      { en: "It was worth every ~", ko: "~할 가치가 충분했어", example: "The view at the top was worth every step.", exampleKo: "정상에서 본 풍경이 한 걸음 한 걸음 값을 했어.", note: "구체적 경험을 감정으로 닫는 마무리 문형." },
+      { en: "I'm more of a ~ person", ko: "나는 ~쪽에 가까워", example: "I'm more of an indoors person myself.", exampleKo: "난 실내파에 가까운 편이야.", note: "취향을 단정하지 않고 말하는 안전한 틀." },
+      { en: "It's not for everyone", ko: "모두한테 맞는 건 아니지", example: "Fair enough — it's definitely not for everyone.", exampleKo: "그럴 만하지. 확실히 모두한테 맞는 건 아니야.", note: "취향 차이를 인정하며 대화를 부드럽게 닫습니다." },
     ],
     aiRole: "궁금한 게 많은 새 친구 Alex",
     yourRole: "취향을 설명하는 나",
@@ -222,11 +257,11 @@ export const SCENARIOS: Scenario[] = [
       { speaker: "you", text: "That's it from me.", ko: "저는 여기까지입니다." },
     ],
     chunks: [
-      { en: "I wrapped up ~ and pushed it for review", ko: "~를 마무리하고 리뷰 올렸습니다", note: "finish 대신 wrap up. 스탠드업에서 가장 많이 쓰는 동사." },
-      { en: "Today I'm picking up ~", ko: "오늘은 ~를 맡습니다", note: "I will do보다 자연스럽고 짧습니다." },
-      { en: "One thing I'm blocked on —", ko: "한 가지 막힌 건요 —", note: "문제 제기를 변명처럼 들리지 않게 여는 표현." },
-      { en: "I still need access to ~", ko: "아직 ~ 접근 권한이 필요합니다", note: "요청을 사실 진술로 바꿔서 부담 없이 전달합니다." },
-      { en: "That's it from me", ko: "저는 여기까지입니다", note: "끝을 명확히 닫아야 다음 사람이 이어받습니다. 어물쩍 끝내지 않기." },
+      { en: "I wrapped up ~ and pushed it for review", ko: "~를 마무리하고 리뷰 올렸습니다", example: "Yesterday I wrapped up the login flow and pushed it for review.", exampleKo: "어제 로그인 플로우를 끝내고 리뷰 요청까지 올렸습니다.", note: "finish 대신 wrap up. 스탠드업에서 가장 많이 쓰는 동사." },
+      { en: "Today I'm picking up ~", ko: "오늘은 ~를 맡습니다", example: "Today I'm picking up the error handling.", exampleKo: "오늘은 에러 처리를 맡아서 진행합니다.", note: "I will do보다 자연스럽고 짧습니다." },
+      { en: "One thing I'm blocked on —", ko: "한 가지 막힌 건요 —", example: "One thing I'm blocked on — I can't test without the staging data.", exampleKo: "하나 막힌 게 있는데, 스테이징 데이터가 없으면 테스트를 못 합니다.", note: "문제 제기를 변명처럼 들리지 않게 여는 표현." },
+      { en: "I still need access to ~", ko: "아직 ~ 접근 권한이 필요합니다", example: "I still need access to the staging database.", exampleKo: "스테이징 데이터베이스 접근 권한이 아직 없습니다.", note: "요청을 사실 진술로 바꿔서 부담 없이 전달합니다." },
+      { en: "That's it from me", ko: "저는 여기까지입니다", example: "That's it from me — back to you.", exampleKo: "저는 여기까지입니다. 넘기겠습니다.", note: "끝을 명확히 닫아야 다음 사람이 이어받습니다. 어물쩍 끝내지 않기." },
     ],
     aiRole: "팀 리드 Priya",
     yourRole: "업데이트할 차례인 나",
@@ -263,11 +298,11 @@ export const SCENARIOS: Scenario[] = [
       { speaker: "ai", text: "Hmm. Yeah, that's a fair point.", ko: "음. 네, 일리 있네요." },
     ],
     chunks: [
-      { en: "I see where you're coming from", ko: "무슨 말씀인지 알겠습니다", note: "반대 전에 반드시 까는 쿠션. 이거 없이 반대하면 무례하게 들립니다." },
-      { en: "That said, ~", ko: "다만, ~", note: "But보다 훨씬 정중하게 방향을 트는 접속어." },
-      { en: "I'd be a bit careful about ~", ko: "~는 좀 조심스럽습니다", note: "I disagree를 직접 말하지 않고 반대하는 완충 표현." },
-      { en: "What if we went with ~ instead?", ko: "대신 ~로 가는 건 어떨까요?", note: "반대만 하면 트러블메이커, 대안까지 내면 기여자가 됩니다." },
-      { en: "That's a fair point", ko: "일리 있네요", note: "상대 반론을 받아칠 때. 인정하면서도 지지 않는 표현." },
+      { en: "I see where you're coming from", ko: "무슨 말씀인지 알겠습니다", example: "I see where you're coming from — the timeline is tight.", exampleKo: "무슨 말씀인지 알겠습니다. 일정이 빠듯하죠.", note: "반대 전에 반드시 까는 쿠션. 이거 없이 반대하면 무례하게 들립니다." },
+      { en: "That said, ~", ko: "다만, ~", example: "That said, I'd be a bit careful about shipping on a Friday.", exampleKo: "다만, 금요일 배포는 좀 조심스럽습니다.", note: "But보다 훨씬 정중하게 방향을 트는 접속어." },
+      { en: "I'd be a bit careful about ~", ko: "~는 좀 조심스럽습니다", example: "I'd be a bit careful about rushing this one.", exampleKo: "이건 서두르는 게 좀 조심스럽습니다.", note: "I disagree를 직접 말하지 않고 반대하는 완충 표현." },
+      { en: "What if we went with ~ instead?", ko: "대신 ~로 가는 건 어떨까요?", example: "What if we went with Monday instead?", exampleKo: "대신 월요일로 가는 건 어떨까요?", note: "반대만 하면 트러블메이커, 대안까지 내면 기여자가 됩니다." },
+      { en: "That's a fair point", ko: "일리 있네요", example: "Hmm, that's a fair point.", exampleKo: "음, 일리 있네요.", note: "상대 반론을 받아칠 때. 인정하면서도 지지 않는 표현." },
     ],
     aiRole: "밀어붙이는 동료 PM Dan",
     yourRole: "반대 의견이 있는 나",
@@ -301,11 +336,11 @@ export const SCENARIOS: Scenario[] = [
       { speaker: "ai", text: "That works. Thanks for flagging it early.", ko: "괜찮습니다. 일찍 알려줘서 고마워요." },
     ],
     chunks: [
-      { en: "Do you have two minutes?", ko: "2분만 시간 되세요?", note: "본론 전에 상대의 동의를 먼저 받는 장치. 한국어 습관 그대로 직역하면 어색해집니다." },
-      { en: "I want to give you a heads-up", ko: "미리 말씀드리자면", note: "나쁜 소식을 '사고 보고'가 아니라 '사전 공유'로 프레이밍합니다." },
-      { en: "I don't think I'll make ~", ko: "~는 못 맞출 것 같습니다", note: "I can't finish보다 부드럽고, 확정이 아닌 판단으로 전달됩니다." },
-      { en: "Would Monday work instead?", ko: "대신 월요일은 괜찮으실까요?", note: "연기 요청은 반드시 구체적 날짜와 함께. 빈손으로 가면 안 됩니다." },
-      { en: "I can send you ~ in the meantime", ko: "그동안 ~는 보내드릴 수 있습니다", note: "부분 납품 제안. 신뢰를 지키는 결정적 한 마디." },
+      { en: "Do you have two minutes?", ko: "2분만 시간 되세요?", example: "Do you have two minutes? It's about the report deadline.", exampleKo: "2분만 시간 되세요? 보고서 마감 관련해서요.", note: "본론 전에 상대의 동의를 먼저 받는 장치. 한국어 습관 그대로 직역하면 어색해집니다." },
+      { en: "I want to give you a heads-up", ko: "미리 말씀드리자면", example: "I want to give you a heads-up about Thursday.", exampleKo: "목요일 건에 대해 미리 말씀드리려고요.", note: "나쁜 소식을 '사고 보고'가 아니라 '사전 공유'로 프레이밍합니다." },
+      { en: "I don't think I'll make ~", ko: "~는 못 맞출 것 같습니다", example: "I don't think I'll make Thursday.", exampleKo: "목요일은 못 맞출 것 같습니다.", note: "I can't finish보다 부드럽고, 확정이 아닌 판단으로 전달됩니다." },
+      { en: "Would Monday work instead?", ko: "대신 월요일은 괜찮으실까요?", example: "Would Monday work instead?", exampleKo: "대신 월요일은 괜찮으실까요?", note: "연기 요청은 반드시 구체적 날짜와 함께. 빈손으로 가면 안 됩니다." },
+      { en: "I can send you ~ in the meantime", ko: "그동안 ~는 보내드릴 수 있습니다", example: "I can send you the first half in the meantime.", exampleKo: "그동안 앞부분 절반은 보내드릴 수 있습니다.", note: "부분 납품 제안. 신뢰를 지키는 결정적 한 마디." },
     ],
     aiRole: "직속 상사 Rachel",
     yourRole: "마감을 못 맞추는 나",
@@ -315,6 +350,8 @@ export const SCENARIOS: Scenario[] = [
     round1Seconds: 180,
   },
 ];
+
+export const SCENARIOS: Scenario[] = [...CORE_SCENARIOS, ...DAILY_EXTRA, ...WORK_EXTRA];
 
 export function getScenario(id: string): Scenario | undefined {
   return SCENARIOS.find((s) => s.id === id);

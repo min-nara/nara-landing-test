@@ -6,7 +6,7 @@ import { fetchTts, blobToBase64, playBlob, speak } from "@/lib/audio";
 import { useRecorder } from "@/lib/useRecorder";
 import { addChunks, appendRound, dueChunks, reviewChunk, saveSession, stats as loadStats } from "@/lib/store";
 import type { Scenario } from "@/lib/scenarios";
-import type { NewChunk, Report, Rescue, StoredChunk, StoredTurn, Transcription } from "@/lib/types";
+import type { NewChunk, Report, Rescue, Stall, StoredChunk, StoredTurn, Transcription } from "@/lib/types";
 import { MicIcon, PlayIcon } from "./Icons";
 
 type Stage = "warmup" | "brief" | "shadow" | "round1" | "report" | "round2" | "wrap" | "done";
@@ -418,6 +418,10 @@ function Shadow({ scenario, onDone }: { scenario: Scenario; onDone: () => void }
       <div className="card chunk-card">
         <div className="en">{chunk.en}</div>
         <div className="ko">{chunk.ko}</div>
+        <div className="example">
+          <div className="example-en">{chunk.example}</div>
+          <div className="example-ko">{chunk.exampleKo}</div>
+        </div>
         <div className="note">{chunk.note}</div>
       </div>
 
@@ -427,11 +431,11 @@ function Shadow({ scenario, onDone }: { scenario: Scenario; onDone: () => void }
           disabled={playing || rec.state === "recording"}
           onClick={async () => {
             setPlaying(true);
-            await speak(chunk.en, 0.85);
+            await speak(chunk.example, 0.85);
             setPlaying(false);
           }}
         >
-          {playing ? <span className="spinner" /> : <PlayIcon />} 듣기
+          {playing ? <span className="spinner" /> : <PlayIcon />} 문장 듣기
         </button>
         <button className="btn btn-ghost" disabled={!mine} onClick={() => mine && playBlob(mine)}>
           <PlayIcon /> 내 소리
@@ -450,7 +454,11 @@ function Shadow({ scenario, onDone }: { scenario: Scenario; onDone: () => void }
           {rec.state === "processing" ? <span className="spinner" /> : <MicIcon live={rec.state === "recording"} />}
         </button>
         <div className="dock-hint">
-          {rec.state === "recording" ? "듣고 있습니다 — 끝나면 다시 탭" : mine ? "좋습니다. 다음으로." : "탭하고 따라 말하세요"}
+          {rec.state === "recording"
+            ? "듣고 있습니다 — 끝나면 다시 탭"
+            : mine
+              ? "좋습니다. 다음으로."
+              : "탭하고 예문을 통째로 따라 말하세요"}
         </div>
         <button
           className="btn btn-primary btn-block"
@@ -527,8 +535,8 @@ function Roleplay({
   }, [turns, rescue, thinking]);
 
   const advance = useCallback(
-    async (userText: string, ms: number, rescued: boolean) => {
-      const next: StoredTurn[] = [...turns, { role: "you", text: userText, ms, rescued }];
+    async (userText: string, ms: number, rescued: boolean, stalls: Stall[] = []) => {
+      const next: StoredTurn[] = [...turns, { role: "you", text: userText, ms, rescued, stalls }];
       setTurns(next);
       setThinking(true);
       try {
@@ -593,7 +601,7 @@ function Roleplay({
         setThinking(false);
         return;
       }
-      await advance(t.text, r.ms, false);
+      await advance(t.text, r.ms, false, t.stalls);
     } catch (e) {
       onError(e instanceof Error ? e.message : "받아쓰기에 실패했습니다.");
       setThinking(false);

@@ -24,8 +24,11 @@ function key(): string {
 /* ------------------------------------------------------------------ models */
 
 const PREFERRED = {
-  chat: ["gemini-3-flash", "gemini-flash-latest", "gemini-2.5-flash", "gemini-2.0-flash"],
-  stt: ["gemini-3.5-transcribe", "gemini-3-flash", "gemini-flash-latest", "gemini-2.5-flash"],
+  // -latest 별칭은 풀이 붐벼 503 이 잦다. 구체 버전을 먼저 두고 별칭은 뒤로 뺀다.
+  chat: ["gemini-3.6-flash", "gemini-3-flash", "gemini-flash-latest", "gemini-2.5-flash"],
+  // 전사 전용 모델이 1순위 — 범용 모델보다 혼잡이 덜하다. JSON 모드를 거부하면
+  // generateJson 이 프롬프트 모드로 알아서 물러선다.
+  stt: ["gemini-3.5-transcribe", "gemini-3.6-flash", "gemini-3-flash", "gemini-flash-latest"],
   tts: [
     "gemini-3.1-flash-tts-preview",
     "gemini-2.5-flash-tts",
@@ -133,7 +136,32 @@ function parseJson<T>(raw: string): T {
   return JSON.parse(cleaned) as T;
 }
 
+/**
+ * 일부 모델은 responseMimeType: application/json 을 거부한다(400).
+ * 그때는 JSON 모드를 빼고 프롬프트만으로 다시 친다 — parseJson 이 코드펜스도 벗겨낸다.
+ */
+async function generateJson(model: string, body: Record<string, unknown>) {
+  try {
+    return await generate(model, body);
+  } catch (e) {
+    if (!(e instanceof Error) || !/JSON mode is not enabled/i.test(e.message)) throw e;
+    const gc = { ...((body.generationConfig as Record<string, unknown>) ?? {}) };
+    delete gc.responseMimeType;
+    console.warn(`[gemini] ${model} JSON 모드 미지원 — 프롬프트 모드로 재시도`);
+    return generate(model, { ...body, generationConfig: gc });
+  }
+}
+
 /* --------------------------------------------------------------------- STT */
+
+/** 막힌 지점 하나. 횟수만 세면 "어디서" 막히는지는 영영 알 수 없다. */
+export type Stall = {
+  /** 막히기 직전까지 말한 것 */
+  before: string;
+  /** 막힘을 뚫고 이어서 나온 말 */
+  after: string;
+  kind: "pause" | "filler";
+};
 
 export type Transcription = {
   text: string;
@@ -143,12 +171,15 @@ export type Transcription = {
   fillers: number;
   /** 한국어로 말해버린 구간 (한국어 구조대 트리거) */
   koreanSpans: string[];
+  /** 멈춤·채움말이 발생한 자리 (히트맵 재료) */
+  stalls: Stall[];
 };
 
 const STT_PROMPT = `You transcribe a language learner's spoken English.
 
 Return ONLY JSON matching this shape:
-{"text": string, "longPauses": number, "fillers": number, "koreanSpans": string[]}
+{"text": string, "longPauses": number, "fillers": number, "koreanSpans": string[],
+ "stalls": [{"before": string, "after": string, "kind": "pause" | "filler"}]}
 
 Rules:
 - "text": verbatim transcript. Keep filler words (um, uh, er). If the speaker
@@ -158,12 +189,17 @@ Rules:
 - "fillers": total count of hesitation sounds (um, uh, er, hmm, 어, 음).
 - "koreanSpans": each stretch the speaker said in Korean instead of English,
   as separate strings. Empty array if they spoke only English.
+- "stalls": one entry per long pause or filler, in the order they occurred.
+  "before" is the last three or four words spoken before the stall; "after" is
+  the first three or four words that followed it. Leave "after" empty if the
+  speaker stopped there. This is what shows the learner where their sentences
+  break down, so be precise about the surrounding words.
 - If the audio has no discernible speech, return text as an empty string.`;
 
 export async function transcribe(audioBase64: string, mimeType: string): Promise<Transcription> {
   if (!hasKey()) return mockTranscription();
   const model = await resolveModel("stt");
-  const { parts } = await generate(model, {
+  const { parts } = await generateJson(model, {
     contents: [
       {
         role: "user",
@@ -180,10 +216,19 @@ export async function transcribe(audioBase64: string, mimeType: string): Promise
       longPauses: Number(parsed.longPauses ?? 0) || 0,
       fillers: Number(parsed.fillers ?? 0) || 0,
       koreanSpans: Array.isArray(parsed.koreanSpans) ? parsed.koreanSpans.filter(Boolean) : [],
+      stalls: Array.isArray(parsed.stalls)
+        ? parsed.stalls
+            .filter((x): x is Stall => !!x && typeof x.before === "string")
+            .map((x) => ({
+              before: x.before.trim(),
+              after: (x.after ?? "").trim(),
+              kind: x.kind === "filler" ? "filler" : "pause",
+            }))
+        : [],
     };
   } catch {
     // JSON이 깨지면 받아쓰기라도 살린다.
-    return { text: raw, longPauses: 0, fillers: 0, koreanSpans: [] };
+    return { text: raw, longPauses: 0, fillers: 0, koreanSpans: [], stalls: [] };
   }
 }
 
@@ -326,6 +371,98 @@ Rules:
   return parseJson<Report>(textOf(parts));
 }
 
+/* ---------------------------------------------------------------- 막힘 패턴 */
+
+export type StallPattern = {
+  /** 어떤 자리에서 막히는지 — 한국어 라벨 */
+  labelKo: string;
+  /** 왜 거기서 막히는지, 무엇을 연습하면 되는지 */
+  adviceKo: string;
+  /** 이 패턴에 해당하는 막힘 수 */
+  count: number;
+  /** 실제 발화에서 뽑은 예시 */
+  examples: string[];
+};
+
+export type StallReport = {
+  summaryKo: string;
+  patterns: StallPattern[];
+};
+
+/**
+ * 막힘을 세는 것과 어디서 막히는지 아는 것은 다른 일이다.
+ * 누적된 막힘 자리를 묶어, 개인이 반복해서 걸려 넘어지는 자리를 찾는다.
+ */
+export async function analyzeStalls(stalls: Stall[]): Promise<StallReport> {
+  if (!hasKey()) return mockStallReport(stalls);
+  const model = await resolveModel("chat");
+  const { parts } = await generate(model, {
+    systemInstruction: {
+      parts: [
+        {
+          text: `A Korean learner of English keeps stalling mid-sentence. You are given
+every stall: the words just before it, and the words that came after.
+
+Find the RECURRING structural positions where they break down. Group them.
+
+Return ONLY JSON:
+{"summaryKo": string,
+ "patterns": [{"labelKo": string, "adviceKo": string, "count": number, "examples": string[]}]}
+
+Rules:
+- At most 4 patterns, ordered by count, highest first. Only patterns with at
+  least two instances. If nothing recurs, return an empty patterns array.
+- "labelKo": the grammatical position, in Korean, 12 characters or fewer.
+  Examples: "동사 고르기 직전", "전치사 앞", "관계절 시작", "문장 첫 단어".
+- "adviceKo": two sentences of Korean. First, why that spot is hard for Korean
+  speakers specifically. Second, one concrete thing to drill.
+- "examples": up to three verbatim "before → after" strings from the data.
+- "summaryKo": one Korean sentence naming the single biggest pattern. If there
+  is no clear pattern, say so plainly instead of inventing one.
+- Never invent stalls that are not in the data.`,
+        },
+      ],
+    },
+    contents: [
+      {
+        role: "user",
+        parts: [
+          {
+            text: stalls
+              .map((x) => `[${x.kind}] "${x.before || "(문장 시작)"}" → "${x.after || "(여기서 멈춤)"}"`)
+              .join(String.fromCharCode(10)),
+          },
+        ],
+      },
+    ],
+    generationConfig: {
+      responseMimeType: "application/json",
+      temperature: 0.2,
+      thinkingConfig: { thinkingBudget: 0 },
+      maxOutputTokens: 1200,
+    },
+  });
+  return parseJson<StallReport>(textOf(parts));
+}
+
+function mockStallReport(stalls: Stall[]): StallReport {
+  if (stalls.length < 2) {
+    return { summaryKo: "(목업) 아직 패턴을 볼 만큼 쌓이지 않았습니다.", patterns: [] };
+  }
+  return {
+    summaryKo: "(목업) 동사를 고르는 자리에서 가장 자주 멈춥니다.",
+    patterns: [
+      {
+        labelKo: "동사 고르기 직전",
+        adviceKo:
+          "(목업) 주어까지는 바로 나오는데 동사에서 멈추는 전형적인 패턴입니다. 자주 쓰는 동사 열 개를 덩어리째 입에 붙이세요.",
+        count: stalls.length,
+        examples: stalls.slice(0, 3).map((x) => `${x.before || "(문장 시작)"} → ${x.after || "(멈춤)"}`),
+      },
+    ],
+  };
+}
+
 /* --------------------------------------------------------------------- TTS */
 
 /** 0.85 = 1차(천천히), 1.0 = 2차(정상 속도) */
@@ -385,6 +522,7 @@ function mockTranscription(): Transcription {
       longPauses: 1,
       fillers: 1,
       koreanSpans: ["그냥 집에서 밀린 일 좀 했어"],
+      stalls: [{ before: "It was okay", after: "그냥 집에서", kind: "filler" }],
     };
   }
   return {
@@ -392,6 +530,11 @@ function mockTranscription(): Transcription {
     longPauses: 2,
     fillers: 4,
     koreanSpans: [],
+    stalls: [
+      { before: "", after: "yeah it was good", kind: "filler" },
+      { before: "I", after: "I stayed home", kind: "filler" },
+      { before: "stayed home mostly and", after: "watched something", kind: "filler" },
+    ],
   };
 }
 

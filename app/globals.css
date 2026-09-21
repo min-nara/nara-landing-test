@@ -352,6 +352,27 @@ a { color: inherit; }
 }
 @keyframes spin { to { transform: rotate(360deg); } }
 
+/* ----------------------------------------------------------- 청크 예문 */
+
+.chunk-card .example {
+  margin-top: 14px;
+  padding: 12px 14px;
+  border-radius: 10px;
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+  text-align: left;
+}
+.chunk-card .example-en {
+  font-size: 16px;
+  line-height: 1.5;
+  color: var(--fg);
+}
+.chunk-card .example-ko {
+  margin-top: 4px;
+  font-size: 13px;
+  color: var(--muted);
+}
+
 /* ------------------------------------------------------- 1차/2차 비교 */
 
 .compare { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
