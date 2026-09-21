@@ -205,3 +205,87 @@ export async function stats(): Promise<Stats> {
     prevHesitations: sessions[1]?.hesitations ?? null,
   };
 }
+
+/* -------------------------------------------------------------------- SRS */
+
+/**
+ * 이번 세션에서 소리 내어 인출할 청크.
+ * 요일이 아니라 세션 카운트가 기준이라, 주 3~4회만 해도 스케줄이 안 무너진다.
+ */
+export async function dueChunks(sessionCount: number, limit = 5): Promise<StoredChunk[]> {
+  const all = await listChunks();
+  return all
+    .filter((c) => c.dueAtSession <= sessionCount)
+    .sort((a, b) => a.dueAtSession - b.dueAtSession)
+    .slice(0, limit);
+}
+
+/** 입으로 나왔으면 간격을 한 칸 늘리고, 안 나왔으면 처음으로 되돌린다. */
+export async function reviewChunk(id: string, recalled: boolean, sessionCount: number): Promise<void> {
+  const uidv = await userId();
+  if (uidv) {
+    const sb = supabase()!;
+    const { data } = await sb.from("speak_chunks").select("interval_step").eq("id", id).single();
+    const step = recalled ? ((data?.interval_step as number) ?? 0) + 1 : 0;
+    const { error } = await sb
+      .from("speak_chunks")
+      .update({ interval_step: step, due_at_session: nextDue(sessionCount, step) })
+      .eq("id", id);
+    if (!error) return;
+  }
+
+  writeLocal(
+    LS_CHUNKS,
+    readLocal<StoredChunk>(LS_CHUNKS).map((c) => {
+      if (c.id !== id) return c;
+      const step = recalled ? c.intervalStep + 1 : 0;
+      return { ...c, intervalStep: step, dueAtSession: nextDue(sessionCount, step) };
+    }),
+  );
+}
+
+/* ------------------------------------------------------------- 2차 누적 */
+
+/**
+ * 세션은 1차 리포트 시점에 이미 저장된다 — 거기서 그만두더라도 기록은 남아야 하므로.
+ * 2차까지 마치면 그만큼을 같은 행에 더한다.
+ */
+export async function appendRound(
+  sessionId: string,
+  extra: { speakingMs: number; hesitations: number; turns: StoredTurn[] },
+): Promise<void> {
+  const uidv = await userId();
+  if (uidv) {
+    const sb = supabase()!;
+    const { data } = await sb
+      .from("speak_sessions")
+      .select("speaking_ms, hesitations, turns")
+      .eq("id", sessionId)
+      .single();
+    if (data) {
+      const { error } = await sb
+        .from("speak_sessions")
+        .update({
+          speaking_ms: (data.speaking_ms as number) + Math.round(extra.speakingMs),
+          hesitations: (data.hesitations as number) + extra.hesitations,
+          turns: [...((data.turns ?? []) as StoredTurn[]), ...extra.turns],
+        })
+        .eq("id", sessionId);
+      if (!error) return;
+    }
+  }
+
+  writeLocal(
+    LS_SESSIONS,
+    readLocal<StoredSession>(LS_SESSIONS).map((s) =>
+      s.id === sessionId
+        ? {
+            ...s,
+            speakingMs: s.speakingMs + extra.speakingMs,
+            hesitations: s.hesitations + extra.hesitations,
+            turns: [...s.turns, ...extra.turns],
+          }
+        : s,
+    ),
+  );
+}

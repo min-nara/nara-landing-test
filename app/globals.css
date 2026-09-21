@@ -352,6 +352,30 @@ a { color: inherit; }
 }
 @keyframes spin { to { transform: rotate(360deg); } }
 
+/* ------------------------------------------------------- 1차/2차 비교 */
+
+.compare { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.compare-col { text-align: center; }
+.compare-metric {
+  font-size: 26px;
+  font-weight: 700;
+  letter-spacing: -0.5px;
+  margin-top: 6px;
+}
+.compare-col .faint { font-size: 12px; }
+.compare-col .btn { font-size: 13px; padding-left: 10px; padding-right: 10px; }
+
+.round-tag {
+  display: inline-block;
+  padding: 1px 7px;
+  margin-right: 6px;
+  border-radius: 999px;
+  background: rgba(124, 156, 255, 0.16);
+  color: var(--accent);
+  font-size: 11px;
+  font-weight: 700;
+}
+
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation-duration: 0.01ms !important; transition-duration: 0.01ms !important; }
 }

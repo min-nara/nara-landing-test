@@ -4,13 +4,16 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { fetchTts, blobToBase64, playBlob, speak } from "@/lib/audio";
 import { useRecorder } from "@/lib/useRecorder";
-import { addChunks, saveSession, stats as loadStats } from "@/lib/store";
+import { addChunks, appendRound, dueChunks, reviewChunk, saveSession, stats as loadStats } from "@/lib/store";
 import type { Scenario } from "@/lib/scenarios";
-import type { NewChunk, Report, Rescue, StoredTurn, Transcription } from "@/lib/types";
+import type { NewChunk, Report, Rescue, StoredChunk, StoredTurn, Transcription } from "@/lib/types";
 import { MicIcon, PlayIcon } from "./Icons";
 
-type Stage = "brief" | "shadow" | "roleplay" | "report" | "done";
-const STAGES: Stage[] = ["brief", "shadow", "roleplay", "report"];
+type Stage = "warmup" | "brief" | "shadow" | "round1" | "report" | "round2" | "wrap" | "done";
+const STAGES: Stage[] = ["brief", "shadow", "round1", "report", "round2", "wrap"];
+
+/** 4/3/2 — 같은 내용을 더 짧은 시간에. 시간을 줄이는 조건이 고정 조건보다 효과적이다. */
+const ROUND2_RATIO = 0.7;
 
 async function postJson<T>(url: string, body: unknown): Promise<T> {
   const res = await fetch(url, {
@@ -33,16 +36,49 @@ export function Session({ scenario }: { scenario: Scenario }) {
   const [stage, setStage] = useState<Stage>("brief");
   const [error, setError] = useState<string | null>(null);
 
-  // 누적 지표
-  const [turns, setTurns] = useState<StoredTurn[]>([]);
-  const [speakingMs, setSpeakingMs] = useState(0);
-  const [hesitations, setHesitations] = useState(0);
+  // 워밍업 — 덱에서 인출할 차례가 된 청크. 없으면 이 단계를 건너뛴다.
+  const [due, setDue] = useState<StoredChunk[] | null>(null);
+  const sessionCount = useRef(0);
+
+  // 라운드별로 따로 센다. 1차 대비 2차가 줄었는지가 이 앱의 성적표다.
+  const [turns1, setTurns1] = useState<StoredTurn[]>([]);
+  const [turns2, setTurns2] = useState<StoredTurn[]>([]);
+  const [spoke1, setSpoke1] = useState({ ms: 0, hesitations: 0 });
+  const [spoke2, setSpoke2] = useState({ ms: 0, hesitations: 0 });
+  const clips1 = useRef<Blob[]>([]);
+  const clips2 = useRef<Blob[]>([]);
+
   const [rescues, setRescues] = useState(0);
   const pendingChunks = useRef<NewChunk[]>([]);
+  const sessionId = useRef<string | null>(null);
 
   const [report, setReport] = useState<Report | null>(null);
 
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      try {
+        const { sessionCount: count } = await loadStats();
+        // 이번 세션은 아직 저장 전이다. 덱의 소환 시점은 '이번 세션 번호' 기준이라
+        // +1 을 해야 "다음 세션에 다시"가 실제로 다음 세션이 된다.
+        const upcoming = count + 1;
+        const rows = await dueChunks(upcoming);
+        if (!alive) return;
+        sessionCount.current = upcoming;
+        setDue(rows);
+        if (rows.length > 0) setStage("warmup");
+      } catch {
+        if (alive) setDue([]);
+      }
+    })();
+    return () => {
+      alive = false;
+    };
+  }, []);
+
   const back = () => (confirm("세션을 나가면 이번 기록은 저장되지 않습니다. 나갈까요?") ? router.push("/") : null);
+
+  const round2Seconds = Math.round(scenario.round1Seconds * ROUND2_RATIO);
 
   return (
     <>
@@ -55,7 +91,7 @@ export function Session({ scenario }: { scenario: Scenario }) {
 
       <div className="progress-rail">
         {STAGES.map((s) => (
-          <i key={s} className={STAGES.indexOf(s) <= STAGES.indexOf(stage as Stage) ? "on" : ""} />
+          <i key={s} className={STAGES.indexOf(s) <= STAGES.indexOf(stage) ? "on" : ""} />
         ))}
       </div>
 
@@ -63,6 +99,10 @@ export function Session({ scenario }: { scenario: Scenario }) {
         <p className="banner banner-error" style={{ marginBottom: 12 }}>
           {error}
         </p>
+      )}
+
+      {stage === "warmup" && due && (
+        <Warmup chunks={due} sessionCount={sessionCount.current} onDone={() => setStage("brief")} />
       )}
 
       {stage === "brief" && <Brief scenario={scenario} onNext={() => setStage("shadow")} />}
@@ -79,48 +119,203 @@ export function Session({ scenario }: { scenario: Scenario }) {
                 scenarioId: scenario.id,
               })),
             );
-            setStage("roleplay");
+            setStage("round1");
           }}
         />
       )}
 
-      {stage === "roleplay" && (
+      {(stage === "round1" || stage === "round2") && (
         <Roleplay
+          key={stage}
           scenario={scenario}
-          turns={turns}
-          setTurns={setTurns}
+          round={stage === "round1" ? 1 : 2}
+          seconds={stage === "round1" ? scenario.round1Seconds : round2Seconds}
+          turns={stage === "round1" ? turns1 : turns2}
+          setTurns={stage === "round1" ? setTurns1 : setTurns2}
           onSpoke={(ms, hes) => {
-            setSpeakingMs((v) => v + ms);
-            setHesitations((v) => v + hes);
+            const bump = (v: { ms: number; hesitations: number }) => ({
+              ms: v.ms + ms,
+              hesitations: v.hesitations + hes,
+            });
+            if (stage === "round1") setSpoke1(bump);
+            else setSpoke2(bump);
           }}
+          onClip={(blob) => (stage === "round1" ? clips1 : clips2).current.push(blob)}
           onRescued={(chunk) => {
             pendingChunks.current.push(chunk);
             setRescues((v) => v + 1);
           }}
           onError={setError}
-          onFinish={() => setStage("report")}
+          onFinish={() => setStage(stage === "round1" ? "report" : "wrap")}
         />
       )}
 
       {stage === "report" && (
         <ReportView
           scenario={scenario}
-          turns={turns}
-          speakingMs={speakingMs}
-          hesitations={hesitations}
+          turns={turns1}
+          speakingMs={spoke1.ms}
+          hesitations={spoke1.hesitations}
           rescues={rescues}
           pendingChunks={pendingChunks}
           report={report}
           setReport={setReport}
+          onSaved={(id) => (sessionId.current = id)}
           onError={setError}
-          onDone={() => setStage("done")}
+          onNext={() => setStage("round2")}
+          round2Seconds={round2Seconds}
+        />
+      )}
+
+      {stage === "wrap" && (
+        <Wrap
+          clips1={clips1.current}
+          clips2={clips2.current}
+          spoke1={spoke1}
+          spoke2={spoke2}
+          onDone={async () => {
+            if (sessionId.current) {
+              await appendRound(sessionId.current, {
+                speakingMs: spoke2.ms,
+                hesitations: spoke2.hesitations,
+                turns: turns2,
+              });
+            }
+            setStage("done");
+          }}
         />
       )}
 
       {stage === "done" && (
-        <Done speakingMs={speakingMs} hesitations={hesitations} rescues={rescues} chunkCount={pendingChunks.current.length} />
+        <Done
+          speakingMs={spoke1.ms + spoke2.ms}
+          hesitations={spoke1.hesitations + spoke2.hesitations}
+          rescues={rescues}
+          chunkCount={pendingChunks.current.length}
+        />
       )}
     </>
+  );
+}
+
+/* ---------------------------------------------------------------- warmup */
+
+/**
+ * 산출형 인출. 카드를 '보고 아는' SRS가 아니라 '입으로 나와야 통과'하는 SRS다.
+ * 인출 방향이 산출이어야 산출 능력이 된다.
+ */
+function Warmup({
+  chunks,
+  sessionCount,
+  onDone,
+}: {
+  chunks: StoredChunk[];
+  sessionCount: number;
+  onDone: () => void;
+}) {
+  const [i, setI] = useState(0);
+  const [revealed, setRevealed] = useState(false);
+  const [playing, setPlaying] = useState(false);
+  const rec = useRecorder();
+  const chunk = chunks[i];
+  const last = i === chunks.length - 1;
+
+  const next = async (recalled: boolean) => {
+    await reviewChunk(chunk.id, recalled, sessionCount);
+    if (last) onDone();
+    else {
+      setRevealed(false);
+      setI((v) => v + 1);
+    }
+  };
+
+  const toggleMic = async () => {
+    if (rec.state === "recording") {
+      await rec.stop();
+      setRevealed(true);
+    } else {
+      await rec.start();
+    }
+  };
+
+  return (
+    <div className="stack">
+      <div>
+        <div className="eyebrow">워밍업 · 지난 청크 인출</div>
+        <h1 className="stage-title" style={{ marginTop: 6 }}>
+          보고 아는 것과 입에서 나오는 건 다릅니다
+        </h1>
+        <p className="stage-sub">한국어를 보고, 영어를 소리 내어 말해보세요. 눈으로 넘기면 효과가 없습니다.</p>
+      </div>
+
+      <div className="chunk-count">
+        {i + 1} / {chunks.length}
+      </div>
+
+      <div className="card chunk-card">
+        <div className="ko" style={{ fontSize: 17 }}>
+          {chunk.ko}
+        </div>
+        {revealed ? (
+          <div className="en" style={{ marginTop: 10 }}>
+            {chunk.en}
+          </div>
+        ) : (
+          <div className="note" style={{ marginTop: 10 }}>
+            먼저 말해보고, 그다음에 확인합니다
+          </div>
+        )}
+      </div>
+
+      {revealed && (
+        <button
+          className="btn btn-ghost btn-block"
+          disabled={playing}
+          onClick={async () => {
+            setPlaying(true);
+            await speak(chunk.en, 0.85);
+            setPlaying(false);
+          }}
+        >
+          {playing ? <span className="spinner" /> : <PlayIcon />} 원어민 소리로 확인
+        </button>
+      )}
+
+      {rec.error && <p className="banner banner-error">{rec.error}</p>}
+
+      <div className="dock">
+        {!revealed ? (
+          <>
+            <button
+              className={`mic ${rec.state === "recording" ? "live" : ""}`}
+              onClick={toggleMic}
+              disabled={rec.state === "processing"}
+              aria-label={rec.state === "recording" ? "말하기 끝" : "말하기 시작"}
+            >
+              {rec.state === "processing" ? <span className="spinner" /> : <MicIcon live={rec.state === "recording"} />}
+            </button>
+            <div className="dock-hint">
+              {rec.state === "recording" ? "말이 끝나면 다시 탭" : "탭하고 영어로 말해보세요"}
+            </div>
+            <button className="btn btn-quiet btn-block" onClick={() => setRevealed(true)}>
+              모르겠으면 바로 정답 보기
+            </button>
+          </>
+        ) : (
+          <>
+            <div className="dock-hint">입에서 나왔나요? 솔직하게 고르면 다음 소환 시점이 정해집니다.</div>
+            <div className="row">
+              <button className="btn btn-ghost" onClick={() => next(false)}>
+                못 나왔다
+              </button>
+              <button className="btn btn-primary" onClick={() => next(true)}>
+                나왔다
+              </button>
+            </div>
+          </>
+        )}
+      </div>
+    </div>
   );
 }
 
@@ -283,17 +478,23 @@ function Shadow({ scenario, onDone }: { scenario: Scenario; onDone: () => void }
 
 function Roleplay({
   scenario,
+  round,
+  seconds,
   turns,
   setTurns,
   onSpoke,
+  onClip,
   onRescued,
   onError,
   onFinish,
 }: {
   scenario: Scenario;
+  round: 1 | 2;
+  seconds: number;
   turns: StoredTurn[];
   setTurns: React.Dispatch<React.SetStateAction<StoredTurn[]>>;
   onSpoke: (ms: number, hesitations: number) => void;
+  onClip: (blob: Blob) => void;
   onRescued: (chunk: NewChunk) => void;
   onError: (msg: string | null) => void;
   onFinish: () => void;
@@ -301,12 +502,15 @@ function Roleplay({
   const rec = useRecorder();
   const [thinking, setThinking] = useState(false);
   const [rescue, setRescue] = useState<Rescue | null>(null);
-  const [left, setLeft] = useState(scenario.round1Seconds);
+  const [left, setLeft] = useState(seconds);
   const [spoken, setSpoken] = useState(0);
   const bottom = useRef<HTMLDivElement>(null);
   const seeded = useRef(false);
 
-  // AI 첫 마디. 오디오는 직전 탭에서 이미 재생을 걸어 두었다.
+  // 2차는 상대도 빨라진다. 실시간 처리 부하가 있어야 자동화가 생긴다.
+  const replyRate = round === 1 ? 0.92 : 1.05;
+
+  // AI 첫 마디. 오디오는 직전 화면의 탭에서 이미 재생을 걸어 두었다.
   useEffect(() => {
     if (seeded.current) return;
     seeded.current = true;
@@ -330,18 +534,18 @@ function Roleplay({
       try {
         const { reply } = await postJson<{ reply: string }>("/api/chat", {
           scenarioId: scenario.id,
-          round: 1,
+          round,
           history: next.map((t) => ({ role: t.role === "ai" ? "model" : "user", text: t.text })),
         });
         setTurns([...next, { role: "ai", text: reply }]);
-        void speak(reply, 0.92);
+        void speak(reply, replyRate);
       } catch (e) {
         onError(e instanceof Error ? e.message : "상대의 답을 받지 못했습니다.");
       } finally {
         setThinking(false);
       }
     },
-    [turns, setTurns, scenario.id, onError],
+    [turns, setTurns, scenario.id, round, replyRate, onError],
   );
 
   const toggleMic = async () => {
@@ -355,6 +559,7 @@ function Roleplay({
     if (!r) return;
     setSpoken((v) => v + r.ms);
     onSpoke(r.ms, 0);
+    onClip(r.wav);
 
     // 구조대가 떠 있으면 사용자는 주어진 문장을 읽는 중이다. 받아쓸 필요가 없다.
     if (rescue) {
@@ -401,12 +606,18 @@ function Roleplay({
     <>
       <div className="hud">
         <div className="t">
-          남은 시간 <b className="mono">{mmss(left)}</b>
+          {round === 2 && <b className="round-tag">2차</b>} 남은 시간 <b className="mono">{mmss(left)}</b>
         </div>
         <div className="t">
           내가 말한 시간 <b className="mono">{mmss(spoken / 1000)}</b>
         </div>
       </div>
+
+      {round === 2 && turns.length <= 1 && (
+        <p className="banner" style={{ marginBottom: 10 }}>
+          같은 상황을 한 번 더. 시간은 30% 짧고 상대는 조금 빠릅니다. 완벽하게 말고, <b>덜 막히게</b>.
+        </p>
+      )}
 
       <div className="convo">
         {turns.map((t, i) => (
@@ -454,7 +665,7 @@ function Roleplay({
                 : "막히면 한국어로 말해도 됩니다"}
         </div>
         <button className="btn btn-ghost btn-block" disabled={rec.state === "recording"} onClick={onFinish}>
-          대화 끝내고 리포트 보기
+          {round === 1 ? "대화 끝내고 리포트 보기" : "2차 끝내고 오늘 마무리"}
         </button>
       </div>
     </>
@@ -472,8 +683,10 @@ function ReportView({
   pendingChunks,
   report,
   setReport,
+  onSaved,
   onError,
-  onDone,
+  onNext,
+  round2Seconds,
 }: {
   scenario: Scenario;
   turns: StoredTurn[];
@@ -483,17 +696,31 @@ function ReportView({
   pendingChunks: React.MutableRefObject<NewChunk[]>;
   report: Report | null;
   setReport: (r: Report) => void;
+  onSaved: (id: string) => void;
   onError: (msg: string) => void;
-  onDone: () => void;
+  onNext: () => void;
+  round2Seconds: number;
 }) {
   const [saving, setSaving] = useState(true);
   const ran = useRef(false);
+
+  // 2차 첫 마디를 미리 받아둔다 — 리포트를 읽는 동안 받아두면 탭 즉시 재생된다.
+  const opening = useRef<Promise<Blob | null> | null>(null);
+  useEffect(() => {
+    opening.current = fetchTts(scenario.opening, 1.05);
+  }, [scenario.opening]);
 
   useEffect(() => {
     if (ran.current) return;
     ran.current = true;
     (async () => {
       try {
+        // 한 마디도 안 한 대화에 리포트를 요구하면 모델이 학습자의 말을 지어낸다.
+        // 없는 발화를 인용한 교정은 피드백이 아니라 거짓말이다.
+        if (!turns.some((t) => t.role === "you")) {
+          setSaving(false);
+          return;
+        }
         const r = await postJson<Report>("/api/report", { scenarioId: scenario.id, turns });
         setReport(r);
         pendingChunks.current.push(
@@ -507,6 +734,7 @@ function ReportView({
           turns,
           report: r,
         });
+        onSaved(session.id);
         const { sessionCount } = await loadStats();
         await addChunks(pendingChunks.current, session.id, sessionCount);
       } catch (e) {
@@ -515,7 +743,7 @@ function ReportView({
         setSaving(false);
       }
     })();
-  }, [scenario.id, turns, speakingMs, hesitations, rescues, pendingChunks, setReport, onError]);
+  }, [scenario.id, turns, speakingMs, hesitations, rescues, pendingChunks, setReport, onSaved, onError]);
 
   if (saving && !report) {
     return (
@@ -536,6 +764,15 @@ function ReportView({
           대화 중엔 안 끊었습니다. 이제 봅시다.
         </h1>
       </div>
+
+      {!report && (
+        <div className="card">
+          <p style={{ fontSize: 15 }}>
+            이번 대화에서 말한 내용이 없어 리포트를 만들지 않았습니다. 없는 발화를 지어내 교정하는 것보다, 한 번 더
+            말해보는 편이 낫습니다.
+          </p>
+        </div>
+      )}
 
       {report && (
         <>
@@ -571,14 +808,119 @@ function ReportView({
               ))}
             </div>
             <p className="faint" style={{ marginTop: 12 }}>
-              다음 세션에서 소리 내어 인출하게 됩니다. 눈으로 아는 것과 입으로 나오는 건 다릅니다.
+              다음 세션 워밍업에서 소리 내어 인출하게 됩니다. 눈으로 아는 것과 입으로 나오는 건 다릅니다.
             </p>
           </div>
         </>
       )}
 
-      <button className="btn btn-primary btn-block" onClick={onDone}>
-        오늘 기록 보기
+      <div className="card">
+        <div className="eyebrow">이제 한 번 더</div>
+        <p style={{ marginTop: 8, fontSize: 15 }}>
+          같은 상황을 <b>{mmss(round2Seconds)}</b> 안에. 방금 본 표현을 써먹어도 좋고, 안 써도 됩니다. 목표는 정확도가
+          아니라 <b>덜 막히는 것</b>입니다.
+        </p>
+      </div>
+
+      <button
+        className="btn btn-primary btn-block"
+        onClick={async () => {
+          const blob = await opening.current;
+          if (blob) void playBlob(blob);
+          onNext();
+        }}
+      >
+        2차 대화 시작하기
+      </button>
+    </div>
+  );
+}
+
+/* ------------------------------------------------------------------- wrap */
+
+/** 1차와 2차를 나란히 듣는다. 늘었다는 걸 말로 설명하는 것보다 귀로 듣는 게 빠르다. */
+function Wrap({
+  clips1,
+  clips2,
+  spoke1,
+  spoke2,
+  onDone,
+}: {
+  clips1: Blob[];
+  clips2: Blob[];
+  spoke1: { ms: number; hesitations: number };
+  spoke2: { ms: number; hesitations: number };
+  onDone: () => void;
+}) {
+  const [playing, setPlaying] = useState<null | 1 | 2>(null);
+  const [busy, setBusy] = useState(false);
+
+  const play = async (which: 1 | 2) => {
+    const clips = which === 1 ? clips1 : clips2;
+    if (clips.length === 0) return;
+    setPlaying(which);
+    for (const clip of clips) await playBlob(clip);
+    setPlaying(null);
+  };
+
+  const delta = spoke1.hesitations - spoke2.hesitations;
+
+  return (
+    <div className="stack">
+      <div>
+        <div className="eyebrow">마무리</div>
+        <h1 className="stage-title" style={{ marginTop: 6 }}>
+          1차와 2차, 직접 들어보세요
+        </h1>
+        <p className="stage-sub">같은 상황을 두 번 말했습니다. 달라진 건 대개 내용이 아니라 흐름입니다.</p>
+      </div>
+
+      <div className="compare">
+        {([1, 2] as const).map((which) => {
+          const spoke = which === 1 ? spoke1 : spoke2;
+          const clips = which === 1 ? clips1 : clips2;
+          return (
+            <div key={which} className="card compare-col">
+              <div className="eyebrow">{which}차</div>
+              <div className="compare-metric mono">{mmss(spoke.ms / 1000)}</div>
+              <div className="faint">말한 시간</div>
+              <div className="compare-metric mono" style={{ marginTop: 10 }}>
+                {spoke.hesitations}
+              </div>
+              <div className="faint">막힘</div>
+              <button
+                className="btn btn-ghost btn-block"
+                style={{ marginTop: 12 }}
+                disabled={clips.length === 0 || playing !== null}
+                onClick={() => play(which)}
+              >
+                {playing === which ? <span className="spinner" /> : <PlayIcon />}
+                {clips.length === 0 ? "녹음 없음" : `내 소리 ${clips.length}개`}
+              </button>
+            </div>
+          );
+        })}
+      </div>
+
+      <div className="card">
+        <p style={{ fontSize: 15 }}>
+          {delta > 0
+            ? `2차에서 막힘이 ${delta}회 줄었습니다. 같은 내용을 짧은 시간에 다시 말하면 이렇게 됩니다.`
+            : delta === 0
+              ? "막힘 횟수는 같았습니다. 한 번에 안 바뀝니다 — 이 훈련은 누적으로 효과가 납니다."
+              : "2차에서 막힘이 늘었습니다. 시간을 줄였으니 당연한 결과일 수 있습니다. 내용을 더 밀어붙였다면 잘하신 겁니다."}
+        </p>
+      </div>
+
+      <button
+        className="btn btn-primary btn-block"
+        disabled={busy || playing !== null}
+        onClick={async () => {
+          setBusy(true);
+          await onDone();
+        }}
+      >
+        {busy ? <span className="spinner" /> : null} 오늘 기록 보기
       </button>
     </div>
   );
